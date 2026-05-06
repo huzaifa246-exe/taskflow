@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TaskFlow — Task Manager</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+  <div class="noise"></div>
+
+  <header>
+    <div class="logo">⬡ TaskFlow</div>
+    <div class="status-bar">
+      <span class="dot" id="status-dot"></span>
+      <span id="status-text">connecting...</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Your tasks.<br/><em>Shipped.</em></h1>
+      <p class="sub">A minimal task manager with a real REST API running on Docker &amp; AWS EC2.</p>
+    </section>
+
+    <!-- Add task form -->
+    <section class="card add-card">
+      <h2>+ New Task</h2>
+      <div class="form-group">
+        <input type="text" id="task-title" placeholder="What needs to be done?" maxlength="100"/>
+      </div>
+      <div class="form-group">
+        <input type="text" id="task-desc" placeholder="Description (optional)"/>
+      </div>
+      <div class="form-row">
+        <select id="task-priority">
+          <option value="low">Low Priority</option>
+          <option value="medium" selected>Medium Priority</option>
+          <option value="high">High Priority</option>
+        </select>
+        <button id="add-btn" onclick="createTask()">Add Task</button>
+      </div>
+      <p id="add-error" class="error-msg"></p>
+    </section>
+
+    <!-- Search -->
+    <section class="card search-card">
+      <div class="search-row">
+        <input type="text" id="search-input" placeholder="Search tasks..."/>
+        <button onclick="searchTasks()">Search</button>
+        <button class="ghost" onclick="loadTasks()">Clear</button>
+      </div>
+    </section>
+
+    <!-- Task list -->
+    <section id="task-list" class="task-list">
+      <div class="loading">Loading tasks...</div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats-bar" id="stats-bar"></section>
+  </main>
+
+  <footer>
+    <span>SE202L DevOps Lab · TaskFlow API</span>
+    <a href="/health" target="_blank">GET /health</a>
+  </footer>
+
+  <script>
+    const API = '';  // same origin — Flask serves the frontend too
+
+    // ── Health check on load ─────────────────────────────────
+    async function checkHealth() {
+      try {
+        const r = await fetch(`${API}/health`);
+        const d = await r.json();
+        document.getElementById('status-dot').className = 'dot online';
+        document.getElementById('status-text').textContent = 'API online';
+      } catch {
+        document.getElementById('status-dot').className = 'dot offline';
+        document.getElementById('status-text').textContent = 'API offline';
+      }
+    }
+
+    // ── Load all tasks ───────────────────────────────────────
+    async function loadTasks() {
+      document.getElementById('search-input').value = '';
+      const r = await fetch(`${API}/api/tasks`);
+      const d = await r.json();
+      renderTasks(d.tasks);
+      renderStats(d.tasks);
+    }
+
+    // ── Create task ──────────────────────────────────────────
+    async function createTask() {
+      const title = document.getElementById('task-title').value.trim();
+      const description = document.getElementById('task-desc').value.trim();
+      const priority = document.getElementById('task-priority').value;
+      const errEl = document.getElementById('add-error');
+      errEl.textContent = '';
+
+      if (!title) { errEl.textContent = 'Title is required.'; return; }
+
+      const r = await fetch(`${API}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description, priority })
+      });
+      const d = await r.json();
+
+      if (!r.ok) { errEl.textContent = d.error || 'Something went wrong.'; return; }
+
+      document.getElementById('task-title').value = '';
+      document.getElementById('task-desc').value = '';
+      loadTasks();
+    }
+
+    // ── Toggle done ──────────────────────────────────────────
+    async function toggleDone(id, current) {
+      await fetch(`${API}/api/tasks/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: !current })
+      });
+      loadTasks();
+    }
+
+    // ── Delete task ──────────────────────────────────────────
+    async function deleteTask(id) {
+      await fetch(`${API}/api/tasks/${id}`, { method: 'DELETE' });
+      loadTasks();
+    }
+
+    // ── Search tasks ─────────────────────────────────────────
+    async function searchTasks() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) { loadTasks(); return; }
+
+      const r = await fetch(`${API}/api/tasks/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      const d = await r.json();
+      renderTasks(d.results);
+    }
+
+    // ── Render task cards ────────────────────────────────────
+    function renderTasks(taskList) {
+      const el = document.getElementById('task-list');
+      if (!taskList.length) {
+        el.innerHTML = '<div class="empty">No tasks yet. Add one above ↑</div>';
+        return;
+      }
+      el.innerHTML = taskList.map(t => `
+        <div class="task-card ${t.done ? 'done' : ''} priority-${t.priority}">
+          <div class="task-top">
+            <button class="check-btn" onclick="toggleDone('${t.id}', ${t.done})">
+              ${t.done ? '✓' : '○'}
+            </button>
+            <div class="task-info">
+              <span class="task-title">${escHtml(t.title)}</span>
+              ${t.description ? `<span class="task-desc">${escHtml(t.description)}</span>` : ''}
+            </div>
+            <div class="task-meta">
+              <span class="badge badge-${t.priority}">${t.priority}</span>
+              <button class="del-btn" onclick="deleteTask('${t.id}')">✕</button>
+            </div>
+          </div>
+          <div class="task-id">id: ${t.id}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderStats(taskList) {
+      const total = taskList.length;
+      const done = taskList.filter(t => t.done).length;
+      const bar = document.getElementById('stats-bar');
+      if (!total) { bar.innerHTML = ''; return; }
+      bar.innerHTML = `
+        <span>${total} task${total !== 1 ? 's' : ''}</span>
+        <span>${done} done</span>
+        <span>${total - done} remaining</span>
+      `;
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Enter key to add ─────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      checkHealth();
+      loadTasks();
+      document.getElementById('task-title').addEventListener('keydown', e => {
+        if (e.key === 'Enter') createTask();
+      });
+      document.getElementById('search-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') searchTasks();
+      });
+    });
+  </script>
+</body>
+</html>
